@@ -1,0 +1,313 @@
+meta:
+  slug: http-server
+  title: Crea tu Servidor HTTP/1.1
+  description: >-
+    Construye un servidor HTTP/1.1 desde cero en Go usando únicamente sockets TCP
+    del paquete net. Aprende el protocolo, parseo de requests, escritura de
+    responses, routing, archivos estáticos y middlewares — sin net/http.
+  language: go
+  difficulty: intermediate
+  runner: buildersmty/runner-go:latest
+  estimated_hours:
+    junior: 20
+    mid: 12
+    senior: 6
+
+modules:
+  - id: tcp
+    title: "Módulo 1 — TCP Foundation"
+    description: >-
+      Abre un socket TCP, acepta conexiones concurrentes con goroutines y
+      despacha cada conexión al handler configurado del servidor.
+    integration_test:
+      type: http
+      request:
+        method: GET
+        path: /health
+      expected:
+        status: 200
+        timeout_ms: 3000
+    submodules:
+      - id: server
+        title: "Listener TCP y loop de aceptación"
+        spec: >-
+          Implementa Server.Start: abre un listener TCP en Server.Addr, acepta
+          conexiones en un loop, y dispara una goroutine por conexión que llame
+          a Server.Handler.ServeHTTP tras parsear la request. Si Accept falla en
+          una conexión, loggea y continúa (no mates el servidor).
+        stubs:
+          - path: server.go
+        makefile: tcp-server.mk
+        tests:
+          - type: http
+            request:
+              method: GET
+              path: /health
+            expected:
+              status: 200
+              body_contains: '"status":"ok"'
+            timeout_ms: 3000
+        resources:
+          - title: "net.Listen y TCP accept loops"
+            file: tcp/server_doc.md
+            type: doc
+            visible_to: [junior, mid, senior]
+          - title: "Signature: Server.Start"
+            file: tcp/server_signature.md
+            type: signature
+            visible_to: [junior, mid, senior]
+          - title: "Hint paso a paso"
+            file: tcp/server_hint.md
+            type: hint
+            visible_to: [junior]
+
+  - id: parsing
+    title: "Módulo 2 — HTTP Parsing"
+    description: >-
+      Parsea la trama HTTP cruda: request line, headers y body cuando hay
+      Content-Length.
+    integration_test:
+      type: http
+      request:
+        method: POST
+        path: /echo
+        headers:
+          Content-Type: text/plain
+        body: "hola mundo"
+      expected:
+        status: 200
+        body_equals: "hola mundo"
+        timeout_ms: 3000
+    submodules:
+      - id: request
+        title: "ParseRequest: línea, headers y body"
+        spec: >-
+          Implementa ParseRequest(reader *bufio.Reader) (*Request, error). Debe
+          leer la request line y parsearla en Method/Path/Version, leer los
+          headers hasta línea vacía, y si existe Content-Length leer exactamente
+          esos bytes en Request.Body con io.ReadFull. Ignora headers malformados
+          sin panic.
+        stubs:
+          - path: request.go
+        makefile: parsing-request.mk
+        tests:
+          - type: http
+            request:
+              method: POST
+              path: /echo
+              headers:
+                Content-Type: text/plain
+              body: "hello"
+            expected:
+              status: 200
+              body_equals: "hello"
+            timeout_ms: 3000
+        resources:
+          - title: "HTTP/1.1 Request format (RFC 7230 §3)"
+            file: parsing/request_spec.md
+            type: spec
+            visible_to: [junior, mid, senior]
+          - title: "Signature: ParseRequest"
+            file: parsing/request_signature.md
+            type: signature
+            visible_to: [junior, mid, senior]
+          - title: "Hint: bufio.Reader.ReadString y io.ReadFull"
+            file: parsing/request_hint.md
+            type: hint
+            visible_to: [junior]
+
+  - id: response
+    title: "Módulo 3 — HTTP Response"
+    description: >-
+      Escribe una respuesta HTTP válida en el socket: status line, headers y
+      body. Auto-status 200 y auto Content-Length cuando el usuario llama Write
+      directo.
+    integration_test:
+      type: http
+      request:
+        method: GET
+        path: /not-a-real-path
+      expected:
+        status: 404
+        timeout_ms: 3000
+    submodules:
+      - id: response
+        title: "ResponseWriter: WriteHeader, Write, SetHeader"
+        spec: >-
+          Implementa el tipo response y sus métodos SetHeader, WriteHeader y
+          Write. WriteHeader emite la status line y todos los headers seguidos
+          de CRLF CRLF. Si Write es llamado antes de WriteHeader, asume 200 y
+          auto-setea Content-Length. Llamadas repetidas a WriteHeader se
+          ignoran.
+        stubs:
+          - path: response.go
+        makefile: response-writer.mk
+        tests:
+          - type: http
+            request:
+              method: GET
+              path: /nope
+            expected:
+              status: 404
+              body_contains: "Not Found"
+            timeout_ms: 3000
+        resources:
+          - title: "HTTP Response format y status codes"
+            file: response/response_spec.md
+            type: spec
+            visible_to: [junior, mid, senior]
+          - title: "Signature: ResponseWriter"
+            file: response/response_signature.md
+            type: signature
+            visible_to: [junior, mid, senior]
+          - title: "Hint: wroteHeader guard"
+            file: response/response_hint.md
+            type: hint
+            visible_to: [junior]
+
+  - id: router
+    title: "Módulo 4 — Router"
+    description: >-
+      Multiplexa por method+path con 404 y 405. Fallback opcional para rutas no
+      registradas.
+    integration_test:
+      type: http
+      request:
+        method: POST
+        path: /health
+      expected:
+        status: 405
+        timeout_ms: 3000
+    submodules:
+      - id: router
+        title: "Router.Handle y ServeHTTP con 404/405"
+        spec: >-
+          Implementa NewRouter, Router.Handle(method, path, handler) y
+          Router.ServeHTTP. Match exacto por (method, path). Si el path existe
+          pero con otro method, responde 405. Si no hay match y existe
+          Router.Fallback, delega al fallback. Sin fallback, responde 404.
+        stubs:
+          - path: router.go
+        makefile: router.mk
+        tests:
+          - type: http
+            request:
+              method: POST
+              path: /health
+            expected:
+              status: 405
+            timeout_ms: 3000
+        resources:
+          - title: "Routing explicado"
+            file: router/router_doc.md
+            type: doc
+            visible_to: [junior, mid]
+          - title: "Signature: Router"
+            file: router/router_signature.md
+            type: signature
+            visible_to: [junior, mid, senior]
+          - title: "Hint: detectar 405 antes de 404"
+            file: router/router_hint.md
+            type: hint
+            visible_to: [junior]
+
+  - id: static
+    title: "Módulo 5 — Static Files"
+    description: >-
+      Sirve archivos estáticos con mime types, fallback a index.html en
+      directorios, y protección contra path traversal.
+    integration_test:
+      type: http
+      request:
+        method: GET
+        path: /style.css
+      expected:
+        status: 200
+        headers:
+          Content-Type: text/css
+        timeout_ms: 3000
+    submodules:
+      - id: static
+        title: "StaticHandler: mime, index, path-traversal"
+        spec: >-
+          Implementa StaticHandler.ServeHTTP: resuelve el path del request bajo
+          baseDir, rechaza path traversal con 403, sirve index.html cuando el
+          path es un directorio, setea Content-Type según la extensión, setea
+          Content-Length y copia el archivo al socket.
+        stubs:
+          - path: static.go
+        makefile: static.mk
+        tests:
+          - type: http
+            request:
+              method: GET
+              path: /style.css
+            expected:
+              status: 200
+              headers:
+                Content-Type: text/css
+            timeout_ms: 3000
+        resources:
+          - title: "Path traversal y filepath.Clean"
+            file: static/static_spec.md
+            type: spec
+            visible_to: [junior, mid, senior]
+          - title: "Signature: StaticHandler"
+            file: static/static_signature.md
+            type: signature
+            visible_to: [junior, mid, senior]
+          - title: "Hint: filepath.Abs + HasPrefix"
+            file: static/static_hint.md
+            type: hint
+            visible_to: [junior]
+
+  - id: middleware
+    title: "Módulo 6 — Middleware"
+    description: >-
+      Encadena middlewares alrededor del handler base. Logger captura el status
+      code. CORS responde preflight en early-exit.
+    integration_test:
+      type: http
+      request:
+        method: OPTIONS
+        path: /health
+      expected:
+        status: 200
+        headers:
+          Access-Control-Allow-Origin: "*"
+        timeout_ms: 3000
+    submodules:
+      - id: handler
+        title: "LoggerMiddleware, CORSMiddleware, ApplyMiddlewares"
+        spec: >-
+          Implementa el tipo Middleware, ApplyMiddlewares (encadena de derecha a
+          izquierda), LoggerMiddleware que registra METHOD PATH STATUS DURATION
+          usando un loggingResponseWriter que intercepta WriteHeader, y
+          CORSMiddleware que setea cabeceras CORS y responde 200 inmediato ante
+          OPTIONS.
+        stubs:
+          - path: handler.go
+        makefile: middleware.mk
+        tests:
+          - type: http
+            request:
+              method: OPTIONS
+              path: /health
+            expected:
+              status: 200
+              headers:
+                Access-Control-Allow-Origin: "*"
+            timeout_ms: 3000
+        resources:
+          - title: "Decorator pattern y middlewares HTTP"
+            file: middleware/middleware_doc.md
+            type: doc
+            visible_to: [junior, mid]
+          - title: "Signature: Middleware y ApplyMiddlewares"
+            file: middleware/middleware_signature.md
+            type: signature
+            visible_to: [junior, mid, senior]
+          - title: "Hint: loggingResponseWriter embed"
+            file: middleware/middleware_hint.md
+            type: hint
+            visible_to: [junior]
