@@ -27,8 +27,9 @@ type Router struct {
 }
 
 // NewRouter returns an empty router ready to accept Handle calls.
+// This constructor is pre-implemented — you only need to implement Handle
+// and ServeHTTP below.
 func NewRouter() *Router {
-	// TODO: implement
 	return &Router{routes: make(map[routeKey]Handler)}
 }
 
