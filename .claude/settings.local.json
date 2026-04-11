@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go build:*)",
+      "Bash(go test:*)",
+      "Bash(cp ../src/request_test.go .)",
+      "Bash(cp ../src/handler_test.go .)"
+    ]
+  }
+}

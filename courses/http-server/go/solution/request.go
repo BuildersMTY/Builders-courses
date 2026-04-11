@@ -17,29 +17,26 @@ type Request struct {
 	Body    []byte
 }
 
-// ParseRequest lee de un bufio.Reader y construye un objeto Request.
-// Parsea la Request Line, los Headers y el Body (si existe Content-Length).
-func ParseRequest(reader *bufio.Reader) (*Request, error) {
-	req := &Request{
-		Headers: make(map[string]string),
-	}
-
-	// 1. Request Line (ej: GET / HTTP/1.1)
+// parseRequestLine lee la primera línea del request HTTP (ej: "GET / HTTP/1.1\r\n"),
+// la recorta y divide en 3 partes: method, path, version.
+func parseRequestLine(reader *bufio.Reader) (method, path, version string, err error) {
 	reqLine, err := reader.ReadString('\n')
 	if err != nil {
-		return nil, fmt.Errorf("error leyendo request line: %w", err)
+		return "", "", "", fmt.Errorf("error leyendo request line: %w", err)
 	}
 	reqLine = strings.TrimRight(reqLine, "\r\n")
 
 	parts := strings.Split(reqLine, " ")
 	if len(parts) != 3 {
-		return nil, fmt.Errorf("formato inválido de request line: %q", reqLine)
+		return "", "", "", fmt.Errorf("formato inválido de request line: %q", reqLine)
 	}
-	req.Method = parts[0]
-	req.Path = parts[1]
-	req.Version = parts[2]
+	return parts[0], parts[1], parts[2], nil
+}
 
-	// 2. Headers
+// parseHeaders lee las líneas de headers hasta encontrar una línea vacía (CRLF).
+// Cada header tiene formato "Key: Value". Headers malformados se ignoran.
+func parseHeaders(reader *bufio.Reader) (map[string]string, error) {
+	headers := make(map[string]string)
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
@@ -60,22 +57,50 @@ func ParseRequest(reader *bufio.Reader) (*Request, error) {
 
 		key := strings.TrimSpace(headerParts[0])
 		val := strings.TrimSpace(headerParts[1])
-		req.Headers[key] = val
+		headers[key] = val
 	}
+	return headers, nil
+}
 
-	// 3. Body
-	// Revisamos si existe el header Content-Length para saber cuántos bytes leer
-	if clStr, ok := req.Headers["Content-Length"]; ok {
-		cl, err := strconv.Atoi(clStr)
-		if err == nil && cl > 0 {
-			req.Body = make([]byte, cl)
-			// io.ReadFull asegura que leemos exactamente 'cl' bytes
-			_, err = io.ReadFull(reader, req.Body)
-			if err != nil {
-				return nil, fmt.Errorf("error leyendo el body: %w", err)
-			}
-		}
+// parseBody lee el body del request si existe Content-Length en los headers.
+// Usa io.ReadFull para leer exactamente esos bytes.
+func parseBody(reader *bufio.Reader, headers map[string]string) ([]byte, error) {
+	clStr, ok := headers["Content-Length"]
+	if !ok {
+		return nil, nil
 	}
+	cl, err := strconv.Atoi(clStr)
+	if err != nil || cl <= 0 {
+		return nil, nil
+	}
+	body := make([]byte, cl)
+	_, err = io.ReadFull(reader, body)
+	if err != nil {
+		return nil, fmt.Errorf("error leyendo el body: %w", err)
+	}
+	return body, nil
+}
 
-	return req, nil
+// ParseRequest orquesta las tres fases de parseo.
+// Esta función ya está implementada — implementa los tres helpers de arriba.
+func ParseRequest(reader *bufio.Reader) (*Request, error) {
+	method, path, version, err := parseRequestLine(reader)
+	if err != nil {
+		return nil, fmt.Errorf("request line: %w", err)
+	}
+	headers, err := parseHeaders(reader)
+	if err != nil {
+		return nil, fmt.Errorf("headers: %w", err)
+	}
+	body, err := parseBody(reader, headers)
+	if err != nil {
+		return nil, fmt.Errorf("body: %w", err)
+	}
+	return &Request{
+		Method:  method,
+		Path:    path,
+		Version: version,
+		Headers: headers,
+		Body:    body,
+	}, nil
 }

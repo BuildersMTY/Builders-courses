@@ -1,12 +1,12 @@
 meta:
   slug: http-server
-  title: Crea tu Servidor HTTP/1.1
+  title: Crea tu Servidor HTTP
   description: >-
-    Construye un servidor HTTP/1.1 desde cero en Go usando únicamente sockets TCP
+    Construye un servidor HTTP desde cero en Go usando únicamente sockets TCP
     del paquete net. Aprende el protocolo, parseo de requests, escritura de
     responses, routing, archivos estáticos y middlewares — sin net/http.
   language: go
-  difficulty: intermediate
+  difficulty: Intermedio
   runner: buildersmty/runner-go:latest
   estimated_hours:
     junior: 20
@@ -14,114 +14,190 @@ meta:
     senior: 6
 
 modules:
+  # ─────────────────────────────────────────────────────────
+  # Módulo 1 — TCP Foundation
+  # ─────────────────────────────────────────────────────────
   - id: tcp
     title: "Módulo 1 — TCP Foundation"
     description: >-
       Abre un socket TCP, acepta conexiones concurrentes con goroutines y
       despacha cada conexión al handler configurado del servidor.
     integration_test:
-      type: http
-      request:
-        method: GET
-        path: /health
-      expected:
-        status: 200
-        timeout_ms: 3000
+      type: script
+      file: tests/tcp_handle_conn_test.sh
+      timeout_ms: 5000
     submodules:
-      - id: server
-        title: "Listener TCP y loop de aceptación"
+      - id: listen
+        title: "Listener TCP y accept loop"
         spec: >-
-          Implementa Server.Start: abre un listener TCP en Server.Addr, acepta
-          conexiones en un loop, y dispara una goroutine por conexión que llame
-          a Server.Handler.ServeHTTP tras parsear la request. Si Accept falla en
-          una conexión, loggea y continúa (no mates el servidor).
+          Implementa Server.Start: abre un listener TCP en Server.Addr con
+          net.Listen("tcp", s.Addr), defer listener.Close(), y entra en un
+          loop infinito llamando listener.Accept(). Por cada conexión
+          aceptada, lanza una goroutine: go s.handleConnection(conn). Si
+          Accept falla en una conexión individual, loggea con log.Printf y
+          hace continue. Retorna error solo si el listener no puede abrirse.
         stubs:
           - path: server.go
-        makefile: tcp-server.mk
+        makefile: tcp-listen.mk
         tests:
-          - type: http
-            request:
-              method: GET
-              path: /health
-            expected:
-              status: 200
-              body_contains: '"status":"ok"'
-            timeout_ms: 3000
+          - type: script
+            file: tests/tcp_listen_test.sh
+            timeout_ms: 5000
         resources:
           - title: "net.Listen y TCP accept loops"
             file: tcp/server_doc.md
             type: doc
             visible_to: [junior, mid, senior]
           - title: "Signature: Server.Start"
-            file: tcp/server_signature.md
+            file: tcp/listen_signature.md
             type: signature
             visible_to: [junior, mid, senior]
-          - title: "Hint paso a paso"
-            file: tcp/server_hint.md
+          - title: "Hint: listener, accept loop y goroutines"
+            file: tcp/listen_hint.md
             type: hint
             visible_to: [junior]
 
+      - id: handle-conn
+        title: "Parsear y despachar la conexión"
+        spec: >-
+          Implementa handleConnection: defer conn.Close(), crea un
+          bufio.NewReader(conn), llama ParseRequest(reader). Si retorna
+          error, crea un NewResponseWriter(conn) y responde WriteError(w,
+          400, "Bad Request"). Si no hay error, crea un NewResponseWriter(conn)
+          y delega al handler: si s.Handler != nil llama
+          s.Handler.ServeHTTP(w, req), si no responde 404.
+        stubs:
+          - path: server.go
+        makefile: tcp-handle-conn.mk
+        tests:
+          - type: script
+            file: tests/tcp_handle_conn_test.sh
+            timeout_ms: 5000
+        resources:
+          - title: "net.Listen y TCP accept loops"
+            file: tcp/server_doc.md
+            type: doc
+            visible_to: [junior, mid, senior]
+          - title: "Signature: handleConnection"
+            file: tcp/handle_conn_signature.md
+            type: signature
+            visible_to: [junior, mid, senior]
+          - title: "Hint: defer, ParseRequest y ServeHTTP"
+            file: tcp/handle_conn_hint.md
+            type: hint
+            visible_to: [junior]
+
+  # ─────────────────────────────────────────────────────────
+  # Módulo 2 — HTTP Parsing
+  # ─────────────────────────────────────────────────────────
   - id: parsing
     title: "Módulo 2 — HTTP Parsing"
     description: >-
       Parsea la trama HTTP cruda: request line, headers y body cuando hay
-      Content-Length.
+      Content-Length. La función ParseRequest ya está implementada como
+      orquestador — implementa los tres helpers que ella llama.
     integration_test:
-      type: http
-      request:
-        method: POST
-        path: /echo
-        headers:
-          Content-Type: text/plain
-        body: "hola mundo"
-      expected:
-        status: 200
-        body_equals: "hola mundo"
-        timeout_ms: 3000
+      type: stdout
+      expected_stdout_contains: "PASS"
+      timeout_ms: 5000
     submodules:
-      - id: request
-        title: "ParseRequest: línea, headers y body"
+      - id: request-line
+        title: "Parsear la Request Line"
         spec: >-
-          Implementa ParseRequest(reader *bufio.Reader) (*Request, error). Debe
-          leer la request line y parsearla en Method/Path/Version, leer los
-          headers hasta línea vacía, y si existe Content-Length leer exactamente
-          esos bytes en Request.Body con io.ReadFull. Ignora headers malformados
-          sin panic.
+          Implementa parseRequestLine(reader *bufio.Reader): lee la primera
+          línea del request HTTP con reader.ReadString('\n'), recorta \r\n
+          con strings.TrimRight, divide por espacio con strings.Split en
+          exactamente 3 partes (method, path, version). Si no tiene 3
+          partes, retorna error. Si la lectura falla, retorna el error de I/O.
         stubs:
           - path: request.go
-        makefile: parsing-request.mk
+        makefile: parsing-request-line.mk
         tests:
-          - type: http
-            request:
-              method: POST
-              path: /echo
-              headers:
-                Content-Type: text/plain
-              body: "hello"
-            expected:
-              status: 200
-              body_equals: "hello"
-            timeout_ms: 3000
+          - type: stdout
+            expected_stdout_contains: "PASS"
+            timeout_ms: 5000
         resources:
           - title: "HTTP/1.1 Request format (RFC 7230 §3)"
             file: parsing/request_spec.md
             type: spec
             visible_to: [junior, mid, senior]
-          - title: "Signature: ParseRequest"
-            file: parsing/request_signature.md
+          - title: "Signature: parseRequestLine"
+            file: parsing/request_line_signature.md
             type: signature
             visible_to: [junior, mid, senior]
-          - title: "Hint: bufio.Reader.ReadString y io.ReadFull"
-            file: parsing/request_hint.md
+          - title: "Hint: ReadString y Split"
+            file: parsing/request_line_hint.md
             type: hint
             visible_to: [junior]
 
+      - id: headers
+        title: "Parsear los Headers"
+        spec: >-
+          Implementa parseHeaders(reader *bufio.Reader): lee líneas del
+          reader en un loop con ReadString('\n') hasta encontrar una línea
+          vacía (fin de headers). Para cada línea, divide por ":" con
+          strings.SplitN(line, ":", 2), recorta espacios con TrimSpace, y
+          guarda en el mapa. Headers malformados (sin ":") se ignoran con
+          continue — sin panic.
+        stubs:
+          - path: request.go
+        makefile: parsing-headers.mk
+        tests:
+          - type: stdout
+            expected_stdout_contains: "PASS"
+            timeout_ms: 5000
+        resources:
+          - title: "HTTP/1.1 Request format (RFC 7230 §3)"
+            file: parsing/request_spec.md
+            type: spec
+            visible_to: [junior, mid, senior]
+          - title: "Signature: parseHeaders"
+            file: parsing/headers_signature.md
+            type: signature
+            visible_to: [junior, mid, senior]
+          - title: "Hint: loop hasta línea vacía"
+            file: parsing/headers_hint.md
+            type: hint
+            visible_to: [junior]
+
+      - id: body
+        title: "Leer el Body con Content-Length"
+        spec: >-
+          Implementa parseBody(reader *bufio.Reader, headers map[string]string):
+          busca "Content-Length" en los headers. Si no existe o es 0, retorna
+          nil sin error. Si existe, parsea el valor con strconv.Atoi, reserva
+          un slice de esos bytes con make([]byte, cl), y lee exactamente esa
+          cantidad con io.ReadFull(reader, body).
+        stubs:
+          - path: request.go
+        makefile: parsing-body.mk
+        tests:
+          - type: stdout
+            expected_stdout_contains: "PASS"
+            timeout_ms: 5000
+        resources:
+          - title: "HTTP/1.1 Request format (RFC 7230 §3)"
+            file: parsing/request_spec.md
+            type: spec
+            visible_to: [junior, mid, senior]
+          - title: "Signature: parseBody"
+            file: parsing/body_signature.md
+            type: signature
+            visible_to: [junior, mid, senior]
+          - title: "Hint: io.ReadFull y Content-Length"
+            file: parsing/body_hint.md
+            type: hint
+            visible_to: [junior]
+
+  # ─────────────────────────────────────────────────────────
+  # Módulo 3 — HTTP Response
+  # ─────────────────────────────────────────────────────────
   - id: response
     title: "Módulo 3 — HTTP Response"
     description: >-
       Escribe una respuesta HTTP válida en el socket: status line, headers y
-      body. Auto-status 200 y auto Content-Length cuando el usuario llama Write
-      directo.
+      body. Auto-status 200 y auto Content-Length cuando Write es llamado sin
+      WriteHeader previo.
     integration_test:
       type: http
       request:
@@ -129,19 +205,54 @@ modules:
         path: /not-a-real-path
       expected:
         status: 404
+        body_contains: "Not Found"
         timeout_ms: 3000
     submodules:
-      - id: response
-        title: "ResponseWriter: WriteHeader, Write, SetHeader"
+      - id: write-header
+        title: "SetHeader y WriteHeader"
         spec: >-
-          Implementa el tipo response y sus métodos SetHeader, WriteHeader y
-          Write. WriteHeader emite la status line y todos los headers seguidos
-          de CRLF CRLF. Si Write es llamado antes de WriteHeader, asume 200 y
-          auto-setea Content-Length. Llamadas repetidas a WriteHeader se
-          ignoran.
+          Implementa SetHeader(key, value): almacena el header en
+          r.headers[key] = value. Implementa WriteHeader(statusCode): si
+          r.wroteHeader es true, retorna (no-op). Si no, marca
+          wroteHeader=true, guarda statusCode, escribe la status line
+          "HTTP/1.1 CODE REASON\r\n" al socket, itera r.headers escribiendo
+          "Key: Value\r\n" por cada uno, y termina con "\r\n" (línea vacía
+          que separa headers del body).
         stubs:
           - path: response.go
-        makefile: response-writer.mk
+        makefile: response-write-header.mk
+        tests:
+          - type: http
+            request:
+              method: GET
+              path: /nope
+            expected:
+              status: 404
+            timeout_ms: 3000
+        resources:
+          - title: "HTTP Response format y status codes"
+            file: response/response_spec.md
+            type: spec
+            visible_to: [junior, mid, senior]
+          - title: "Signature: SetHeader y WriteHeader"
+            file: response/write_header_signature.md
+            type: signature
+            visible_to: [junior, mid, senior]
+          - title: "Hint: wroteHeader guard y fmt.Sprintf"
+            file: response/write_header_hint.md
+            type: hint
+            visible_to: [junior]
+
+      - id: write
+        title: "Write: body con auto-200"
+        spec: >-
+          Implementa Write(b []byte): si WriteHeader no ha sido llamado aún
+          (!r.wroteHeader), auto-setea Content-Length al tamaño de b con
+          SetHeader y llama WriteHeader(200). Luego escribe los bytes del
+          body al socket con r.conn.Write(b) y retorna su resultado.
+        stubs:
+          - path: response.go
+        makefile: response-write.mk
         tests:
           - type: http
             request:
@@ -156,20 +267,23 @@ modules:
             file: response/response_spec.md
             type: spec
             visible_to: [junior, mid, senior]
-          - title: "Signature: ResponseWriter"
-            file: response/response_signature.md
+          - title: "Signature: Write"
+            file: response/write_signature.md
             type: signature
             visible_to: [junior, mid, senior]
-          - title: "Hint: wroteHeader guard"
-            file: response/response_hint.md
+          - title: "Hint: auto-200 y Content-Length"
+            file: response/write_hint.md
             type: hint
             visible_to: [junior]
 
+  # ─────────────────────────────────────────────────────────
+  # Módulo 4 — Router
+  # ─────────────────────────────────────────────────────────
   - id: router
     title: "Módulo 4 — Router"
     description: >-
-      Multiplexa por method+path con 404 y 405. Fallback opcional para rutas no
-      registradas.
+      Multiplexa por method+path con 404 y 405. Fallback opcional para rutas
+      no registradas.
     integration_test:
       type: http
       request:
@@ -179,16 +293,64 @@ modules:
         status: 405
         timeout_ms: 3000
     submodules:
-      - id: router
-        title: "Router.Handle y ServeHTTP con 404/405"
+      - id: register
+        title: "Handle y dispatch exacto"
         spec: >-
-          Implementa NewRouter, Router.Handle(method, path, handler) y
-          Router.ServeHTTP. Match exacto por (method, path). Si el path existe
-          pero con otro method, responde 405. Si no hay match y existe
-          Router.Fallback, delega al fallback. Sin fallback, responde 404.
+          Implementa Router.Handle(method, path, handler): almacena el
+          handler en el mapa de rutas con routeKey{method, path}. Implementa
+          la primera parte de Router.ServeHTTP: construye la routeKey, busca
+          en el mapa con lookup directo. Si encuentra match exacto, llama
+          handler.ServeHTTP(w, r) y retorna. Si no hay match, responde 404
+          con WriteError.
         stubs:
           - path: router.go
-        makefile: router.mk
+        makefile: router-register.mk
+        tests:
+          - type: http
+            request:
+              method: GET
+              path: /health
+            expected:
+              status: 200
+              body_contains: '"status":"ok"'
+            timeout_ms: 3000
+          - type: http
+            request:
+              method: POST
+              path: /echo
+              headers:
+                Content-Type: text/plain
+              body: "hello"
+            expected:
+              status: 200
+              body_equals: "hello"
+            timeout_ms: 3000
+        resources:
+          - title: "Routing explicado"
+            file: router/router_doc.md
+            type: doc
+            visible_to: [junior, mid]
+          - title: "Signature: Handle y dispatch"
+            file: router/register_signature.md
+            type: signature
+            visible_to: [junior, mid, senior]
+          - title: "Hint: routeKey y map lookup"
+            file: router/register_hint.md
+            type: hint
+            visible_to: [junior]
+
+      - id: dispatch
+        title: "405, 404 y fallback"
+        spec: >-
+          Mejora Router.ServeHTTP: antes del 404 final, recorre las rutas
+          registradas buscando si alguna comparte el path con otro method.
+          Si la encuentra, responde 405 Method Not Allowed. Si no hay match
+          por path y Router.Fallback no es nil, delega al fallback con
+          Fallback.ServeHTTP(w, r). Solo si no hay match ni fallback,
+          responde 404.
+        stubs:
+          - path: router.go
+        makefile: router-dispatch.mk
         tests:
           - type: http
             request:
@@ -197,20 +359,30 @@ modules:
             expected:
               status: 405
             timeout_ms: 3000
+          - type: http
+            request:
+              method: GET
+              path: /nonexistent
+            expected:
+              status: 404
+            timeout_ms: 3000
         resources:
-          - title: "Routing explicado"
+          - title: "Routing: 404 vs 405"
             file: router/router_doc.md
             type: doc
             visible_to: [junior, mid]
-          - title: "Signature: Router"
-            file: router/router_signature.md
+          - title: "Signature: dispatch completo"
+            file: router/dispatch_signature.md
             type: signature
             visible_to: [junior, mid, senior]
           - title: "Hint: detectar 405 antes de 404"
-            file: router/router_hint.md
+            file: router/dispatch_hint.md
             type: hint
             visible_to: [junior]
 
+  # ─────────────────────────────────────────────────────────
+  # Módulo 5 — Static Files
+  # ─────────────────────────────────────────────────────────
   - id: static
     title: "Módulo 5 — Static Files"
     description: >-
@@ -220,23 +392,25 @@ modules:
       type: http
       request:
         method: GET
-        path: /style.css
+        path: /
       expected:
         status: 200
         headers:
-          Content-Type: text/css
+          Content-Type: text/html
         timeout_ms: 3000
     submodules:
-      - id: static
-        title: "StaticHandler: mime, index, path-traversal"
+      - id: serve-file
+        title: "Servir un archivo con MIME type"
         spec: >-
-          Implementa StaticHandler.ServeHTTP: resuelve el path del request bajo
-          baseDir, rechaza path traversal con 403, sirve index.html cuando el
-          path es un directorio, setea Content-Type según la extensión, setea
-          Content-Length y copia el archivo al socket.
+          Implementa la primera parte de StaticHandler.ServeHTTP: une r.Path
+          con h.baseDir usando filepath.Join, verifica que el archivo existe
+          con os.Stat (si no existe, 404), ábrelo con os.Open (si falla,
+          500), detecta el Content-Type con getMimeType(filepath.Ext()),
+          setea Content-Type y Content-Length, llama WriteHeader(200), y
+          copia el archivo al socket con io.Copy(w, file). Defer file.Close().
         stubs:
           - path: static.go
-        makefile: static.mk
+        makefile: static-serve.mk
         tests:
           - type: http
             request:
@@ -248,24 +422,98 @@ modules:
                 Content-Type: text/css
             timeout_ms: 3000
         resources:
+          - title: "MIME types y file serving"
+            file: static/static_spec.md
+            type: spec
+            visible_to: [junior, mid, senior]
+          - title: "Signature: ServeHTTP básico"
+            file: static/serve_file_signature.md
+            type: signature
+            visible_to: [junior, mid, senior]
+          - title: "Hint: filepath.Join, os.Stat, io.Copy"
+            file: static/serve_file_hint.md
+            type: hint
+            visible_to: [junior]
+
+      - id: traversal
+        title: "Protección contra path traversal"
+        spec: >-
+          Agrega protección contra path traversal ANTES de abrir el archivo:
+          aplica filepath.Clean al path del request, luego obtén las rutas
+          absolutas de baseDir y fullPath con filepath.Abs. Verifica que
+          absPath empiece con absBase usando strings.HasPrefix. Si no,
+          responde 403 Forbidden con WriteError.
+        stubs:
+          - path: static.go
+        makefile: static-traversal.mk
+        tests:
+          - type: http
+            request:
+              method: GET
+              path: /style.css
+            expected:
+              status: 200
+            timeout_ms: 3000
+          - type: script
+            file: tests/path_traversal_test.sh
+            timeout_ms: 5000
+        resources:
           - title: "Path traversal y filepath.Clean"
             file: static/static_spec.md
             type: spec
             visible_to: [junior, mid, senior]
-          - title: "Signature: StaticHandler"
-            file: static/static_signature.md
+          - title: "Signature: traversal guard"
+            file: static/traversal_signature.md
             type: signature
             visible_to: [junior, mid, senior]
           - title: "Hint: filepath.Abs + HasPrefix"
-            file: static/static_hint.md
+            file: static/traversal_hint.md
             type: hint
             visible_to: [junior]
 
+      - id: index
+        title: "Fallback a index.html en directorios"
+        spec: >-
+          Después del os.Stat exitoso, verifica si info.IsDir(). Si es un
+          directorio, reapunta fullPath a filepath.Join(fullPath, "index.html")
+          y vuelve a hacer os.Stat. Si index.html no existe, responde 404.
+          Continúa con el flujo normal de servir el archivo.
+        stubs:
+          - path: static.go
+        makefile: static-index.mk
+        tests:
+          - type: http
+            request:
+              method: GET
+              path: /
+            expected:
+              status: 200
+              headers:
+                Content-Type: text/html
+            timeout_ms: 3000
+        resources:
+          - title: "Directorios e index.html"
+            file: static/static_spec.md
+            type: spec
+            visible_to: [junior, mid, senior]
+          - title: "Signature: index fallback"
+            file: static/index_signature.md
+            type: signature
+            visible_to: [junior, mid, senior]
+          - title: "Hint: IsDir y filepath.Join"
+            file: static/index_hint.md
+            type: hint
+            visible_to: [junior]
+
+  # ─────────────────────────────────────────────────────────
+  # Módulo 6 — Middleware
+  # ─────────────────────────────────────────────────────────
   - id: middleware
     title: "Módulo 6 — Middleware"
     description: >-
-      Encadena middlewares alrededor del handler base. Logger captura el status
-      code. CORS responde preflight en early-exit.
+      Encadena middlewares alrededor del handler base. CORS responde preflight
+      en early-exit. Logger captura el status code con un ResponseWriter
+      decorado.
     integration_test:
       type: http
       request:
@@ -277,17 +525,47 @@ modules:
           Access-Control-Allow-Origin: "*"
         timeout_ms: 3000
     submodules:
-      - id: handler
-        title: "LoggerMiddleware, CORSMiddleware, ApplyMiddlewares"
+      - id: apply
+        title: "ApplyMiddlewares"
         spec: >-
-          Implementa el tipo Middleware, ApplyMiddlewares (encadena de derecha a
-          izquierda), LoggerMiddleware que registra METHOD PATH STATUS DURATION
-          usando un loggingResponseWriter que intercepta WriteHeader, y
-          CORSMiddleware que setea cabeceras CORS y responde 200 inmediato ante
-          OPTIONS.
+          Implementa ApplyMiddlewares(base Handler, middlewares ...Middleware):
+          itera el slice de middlewares en orden inverso (del último al
+          primero, i.e. for i := len(middlewares)-1; i >= 0; i--) y envuelve
+          progresivamente al handler base con base = middlewares[i](base).
+          El primer middleware de la lista será el más externo.
         stubs:
           - path: handler.go
-        makefile: middleware.mk
+        makefile: middleware-apply.mk
+        tests:
+          - type: stdout
+            expected_stdout_contains: "PASS"
+            timeout_ms: 5000
+        resources:
+          - title: "Decorator pattern y middlewares HTTP"
+            file: middleware/middleware_doc.md
+            type: doc
+            visible_to: [junior, mid]
+          - title: "Signature: ApplyMiddlewares"
+            file: middleware/apply_signature.md
+            type: signature
+            visible_to: [junior, mid, senior]
+          - title: "Hint: iteración inversa"
+            file: middleware/apply_hint.md
+            type: hint
+            visible_to: [junior]
+
+      - id: cors
+        title: "CORSMiddleware"
+        spec: >-
+          Implementa CORSMiddleware: setea las cabeceras
+          Access-Control-Allow-Origin ("*"), Access-Control-Allow-Methods
+          ("GET, POST, OPTIONS"), y Access-Control-Allow-Headers
+          ("Content-Type") en cada response. Si el method del request es
+          "OPTIONS", responde w.WriteHeader(200) inmediato y retorna sin
+          llamar a next.ServeHTTP (early exit para preflight).
+        stubs:
+          - path: handler.go
+        makefile: middleware-cors.mk
         tests:
           - type: http
             request:
@@ -298,16 +576,63 @@ modules:
               headers:
                 Access-Control-Allow-Origin: "*"
             timeout_ms: 3000
+          - type: http
+            request:
+              method: GET
+              path: /health
+            expected:
+              status: 200
+              headers:
+                Access-Control-Allow-Origin: "*"
+              body_contains: '"status":"ok"'
+            timeout_ms: 3000
         resources:
-          - title: "Decorator pattern y middlewares HTTP"
+          - title: "CORS preflight y headers"
             file: middleware/middleware_doc.md
             type: doc
             visible_to: [junior, mid]
-          - title: "Signature: Middleware y ApplyMiddlewares"
-            file: middleware/middleware_signature.md
+          - title: "Signature: CORSMiddleware"
+            file: middleware/cors_signature.md
+            type: signature
+            visible_to: [junior, mid, senior]
+          - title: "Hint: SetHeader + early return para OPTIONS"
+            file: middleware/cors_hint.md
+            type: hint
+            visible_to: [junior]
+
+      - id: logger
+        title: "LoggerMiddleware"
+        spec: >-
+          Implementa loggingResponseWriter.WriteHeader: captura el status
+          code en w.statusCode y delega al ResponseWriter embebido con
+          w.ResponseWriter.WriteHeader(code). Implementa LoggerMiddleware:
+          registra time.Now() al inicio, envuelve el writer en un
+          &loggingResponseWriter{ResponseWriter: w, statusCode: 0}, llama a
+          next.ServeHTTP(lw, r) usando el writer envuelto, y al terminar
+          loggea con log.Printf("%s %s %d %v", method, path, status,
+          duration).
+        stubs:
+          - path: handler.go
+        makefile: middleware-logger.mk
+        tests:
+          - type: http
+            request:
+              method: GET
+              path: /health
+            expected:
+              status: 200
+              body_contains: '"status":"ok"'
+            timeout_ms: 3000
+        resources:
+          - title: "Logger y ResponseWriter decoration"
+            file: middleware/middleware_doc.md
+            type: doc
+            visible_to: [junior, mid]
+          - title: "Signature: LoggerMiddleware"
+            file: middleware/logger_signature.md
             type: signature
             visible_to: [junior, mid, senior]
           - title: "Hint: loggingResponseWriter embed"
-            file: middleware/middleware_hint.md
+            file: middleware/logger_hint.md
             type: hint
             visible_to: [junior]
