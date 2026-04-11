@@ -13,11 +13,16 @@ courses/
   {course-slug}/
     {language}/
       course.yaml       ← defines the entire course: modules, submodules, tests, resources
-      src/              ← stubs: source files with empty function bodies for the student to fill
+      src/              ← stubs: source files (and unit-test files) for the student to fill
       solution/         ← complete working reference implementation, never exposed to students
       resources/        ← markdown docs organized by module/submodule
-      makefiles/        ← one .mk file per submodule, used by the runner to execute tests
+      tests/            ← optional: shell scripts or test binaries used by `script`-type tests
+      Dockerfile        ← optional: only required when introducing a new language runner
 ```
+
+The `tests/` directory holds files referenced by `type: script` tests. Paths in `course.yaml` are relative to the language root (e.g. `tests/path_traversal_test.sh`).
+
+There is **no `makefiles/` directory** in most courses. The platform builds and runs the student's project using language defaults (see TESTS.md → "Language Defaults"). Contributors only need to override these in `course.yaml` when they have custom needs.
 
 ---
 
@@ -36,22 +41,36 @@ meta:
     mid: int
     senior: int
 
+  # Optional overrides — only set when language defaults don't fit.
+  # See TESTS.md → "Language Defaults" for the per-language built-in commands.
+  build_cmd: string  # e.g. "go build -tags integration -o $BUILDERSMTY_BINARY ."
+  run_cmd:   string  # e.g. "$BUILDERSMTY_BINARY --port 8080"
+  unit_cmd:  string  # e.g. "go test -tags integration -run {match} -v ./..."
+
 modules:
   - id: string # short, snake_case
     title: string
     description: string
+    integration_test: # runs after all submodules in this module pass
+      # Same shape as a single entry in `tests:` below.
+      # See TESTS.md for the five supported test types and their fields.
+      type: unit | stdout | http | tcp | script
+      # ...type-specific fields
     submodules:
       - id: string # short, snake_case
         title: string
         spec: string # technical description of what the student must implement
         stubs:
           - path: string # relative to src/, e.g. server.go
-        makefile: string # relative to makefiles/, e.g. tcp-listen.mk
+        # Optional per-submodule overrides (rarely needed):
+        # build_cmd, run_cmd, unit_cmd
         tests:
-          - type: submodule | module_integration
-            stdin: string # input fed to the program, empty string if none
-            expected_stdout: string # exact expected output
-            timeout_ms: int
+          # Each test is dispatched by `type` to the corresponding handler.
+          # See TESTS.md for the full schema of each test type.
+          - type: unit | stdout | http | tcp | script
+            # ...type-specific fields (request/expected for http, send/expected_hex
+            # for tcp, file for script, stdin/expected_stdout for stdout,
+            # match for unit)
         resources:
           - title: string
             file: string # relative to resources/
@@ -59,6 +78,8 @@ modules:
             visible_to:
               - junior | mid | senior
 ```
+
+The full test schema (fields per type, assertions, examples, build/run defaults) lives in **TESTS.md** — this file only covers the structural shape of `course.yaml`.
 
 ---
 
@@ -100,30 +121,43 @@ Resource types:
 
 ---
 
-## Makefiles
+## Build & Run
 
-Each submodule has its own `.mk` file that defines a `test` target. The runner executes `make -f {makefile} test` inside the student's workspace. The makefile must:
+The platform builds and runs the student's project using **language defaults** — not contributor-supplied makefiles. The full per-language defaults table lives in TESTS.md → "Language Defaults".
 
-- Compile the code if the language requires it
-- Run the test binary or script
-- Exit 0 on pass, non-zero on failure
-- Print output that matches `expected_stdout` exactly on success
+For Go, the defaults are:
 
-```makefile
-test:
-	go build -o server . && \
-	./server & sleep 0.5 && \
-	curl -s http://localhost:8080/health && \
-	kill %1
 ```
+build_cmd:  go build -o $BUILDERSMTY_BINARY .
+run_cmd:    $BUILDERSMTY_BINARY
+unit_cmd:   go test -run {match} -v -count=1 .
+```
+
+After the build, an executable exists at `$BUILDERSMTY_BINARY` (default: `/tmp/program`). The platform spawns it for `http`/`tcp`/`script` tests and pipes stdin/stdout for `stdout` tests. `unit` tests bypass the binary entirely and run the language's native test runner.
+
+**Contributors do not write build scripts, makefiles, or test runners.** They declare tests in `course.yaml` and let the platform handle execution. The only time you override a default is when you need custom build flags, env vars, or test runner config — and the override goes in `meta` (course-wide) or in the submodule (per-submodule), as a string field, not a separate file.
+
+### Program lifecycle within a submodule
+
+A submodule can declare multiple tests. For tests that need a running program (`http`, `tcp`, `script`), the platform starts the program **once** at the beginning of the submodule run, executes all tests in order against the same process, and kills it at the end. Tests do NOT get a fresh process per test. Contributors can rely on this for stateful assertions within a single submodule run (e.g. POST then GET).
+
+For tests that need to control lifecycle themselves (DB persistence, crash recovery), use `type: script` with `manages_lifecycle: true` — see TESTS.md.
+
+### Integration tests
+
+Module-level `integration_test` entries follow the same execution model. The platform builds the project, spawns the binary if the test type needs it, and runs the assertion. No special configuration required.
 
 ---
 
 ## Runner
 
-Each language has a Docker image pre-built with all required tooling. The image is defined in a `Dockerfile` inside the course directory and published to Docker Hub under `buildersmty/runner-{language}`.
+Each language has a Docker image pre-built with all required tooling. Images are published to Docker Hub under `buildersmty/runner-{language}` and referenced from `meta.runner` in `course.yaml`.
 
-The runner is stateless — it receives the student's files via a tmpfs mount, executes the makefile, returns stdout/stderr, and is returned to the pool. No state persists between runs.
+Runner images are maintained in the **infra repo** (`builders-platform/runners/{language}/`), not in this repo. The course only needs to reference the published image tag. A `Dockerfile` is committed inside a course directory only when introducing a new language that doesn't already have a runner image — once the image is published, the Dockerfile lives in the infra repo.
+
+The runner is stateless — it receives the student's files via a tmpfs mount, runs the build and test commands declared in `course.yaml` (or the language defaults), returns stdout/stderr, and is returned to the pool. No state persists between runs.
+
+The runner image must guarantee a few baseline tools are available so `script`-type tests don't need to detect them: `bash`, `curl`, `nc`, plus the language toolchain. Contributors writing scripts can assume these.
 
 ---
 
@@ -131,7 +165,7 @@ The runner is stateless — it receives the student's files via a tmpfs mount, e
 
 1. Fork this repo
 2. Copy an existing course directory as a template
-3. Fill `course.yaml`, `src/`, `solution/`, `resources/`, `makefiles/`
+3. Fill `course.yaml`, `src/`, `solution/`, `resources/` (and `tests/` if you need `script` tests)
 4. Ensure `solution/` passes all tests defined in `course.yaml`
 5. Open a PR — CI validates automatically
 

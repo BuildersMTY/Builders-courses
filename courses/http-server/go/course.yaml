@@ -6,7 +6,7 @@ meta:
     del paquete net. Aprende el protocolo, parseo de requests, escritura de
     responses, routing, archivos estáticos y middlewares — sin net/http.
   language: go
-  difficulty: Intermedio
+  difficulty: intermediate
   runner: buildersmty/runner-go:latest
   estimated_hours:
     junior: 20
@@ -38,7 +38,6 @@ modules:
           hace continue. Retorna error solo si el listener no puede abrirse.
         stubs:
           - path: server.go
-        makefile: tcp-listen.mk
         tests:
           - type: script
             file: tests/tcp_listen_test.sh
@@ -68,7 +67,6 @@ modules:
           s.Handler.ServeHTTP(w, req), si no responde 404.
         stubs:
           - path: server.go
-        makefile: tcp-handle-conn.mk
         tests:
           - type: script
             file: tests/tcp_handle_conn_test.sh
@@ -97,8 +95,8 @@ modules:
       Content-Length. La función ParseRequest ya está implementada como
       orquestador — implementa los tres helpers que ella llama.
     integration_test:
-      type: stdout
-      expected_stdout_contains: "PASS"
+      type: unit
+      match: TestParseRequest
       timeout_ms: 5000
     submodules:
       - id: request-line
@@ -111,10 +109,9 @@ modules:
           partes, retorna error. Si la lectura falla, retorna el error de I/O.
         stubs:
           - path: request.go
-        makefile: parsing-request-line.mk
         tests:
-          - type: stdout
-            expected_stdout_contains: "PASS"
+          - type: unit
+            match: TestParseRequestLine
             timeout_ms: 5000
         resources:
           - title: "HTTP/1.1 Request format (RFC 7230 §3)"
@@ -141,10 +138,9 @@ modules:
           continue — sin panic.
         stubs:
           - path: request.go
-        makefile: parsing-headers.mk
         tests:
-          - type: stdout
-            expected_stdout_contains: "PASS"
+          - type: unit
+            match: TestParseHeaders
             timeout_ms: 5000
         resources:
           - title: "HTTP/1.1 Request format (RFC 7230 §3)"
@@ -170,10 +166,9 @@ modules:
           cantidad con io.ReadFull(reader, body).
         stubs:
           - path: request.go
-        makefile: parsing-body.mk
         tests:
-          - type: stdout
-            expected_stdout_contains: "PASS"
+          - type: unit
+            match: TestParseBody
             timeout_ms: 5000
         resources:
           - title: "HTTP/1.1 Request format (RFC 7230 §3)"
@@ -220,7 +215,6 @@ modules:
           que separa headers del body).
         stubs:
           - path: response.go
-        makefile: response-write-header.mk
         tests:
           - type: http
             request:
@@ -252,7 +246,6 @@ modules:
           body al socket con r.conn.Write(b) y retorna su resultado.
         stubs:
           - path: response.go
-        makefile: response-write.mk
         tests:
           - type: http
             request:
@@ -304,7 +297,6 @@ modules:
           con WriteError.
         stubs:
           - path: router.go
-        makefile: router-register.mk
         tests:
           - type: http
             request:
@@ -350,7 +342,6 @@ modules:
           responde 404.
         stubs:
           - path: router.go
-        makefile: router-dispatch.mk
         tests:
           - type: http
             request:
@@ -410,7 +401,6 @@ modules:
           copia el archivo al socket con io.Copy(w, file). Defer file.Close().
         stubs:
           - path: static.go
-        makefile: static-serve.mk
         tests:
           - type: http
             request:
@@ -445,7 +435,6 @@ modules:
           responde 403 Forbidden con WriteError.
         stubs:
           - path: static.go
-        makefile: static-traversal.mk
         tests:
           - type: http
             request:
@@ -480,7 +469,6 @@ modules:
           Continúa con el flujo normal de servir el archivo.
         stubs:
           - path: static.go
-        makefile: static-index.mk
         tests:
           - type: http
             request:
@@ -535,10 +523,9 @@ modules:
           El primer middleware de la lista será el más externo.
         stubs:
           - path: handler.go
-        makefile: middleware-apply.mk
         tests:
-          - type: stdout
-            expected_stdout_contains: "PASS"
+          - type: unit
+            match: TestApplyMiddlewares
             timeout_ms: 5000
         resources:
           - title: "Decorator pattern y middlewares HTTP"
@@ -565,7 +552,6 @@ modules:
           llamar a next.ServeHTTP (early exit para preflight).
         stubs:
           - path: handler.go
-        makefile: middleware-cors.mk
         tests:
           - type: http
             request:
@@ -613,7 +599,6 @@ modules:
           duration).
         stubs:
           - path: handler.go
-        makefile: middleware-logger.mk
         tests:
           - type: http
             request:
